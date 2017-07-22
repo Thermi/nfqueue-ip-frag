@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/binary"
+//	"encoding/binary"
 	"fmt"
 	"os"
 	"os/signal"
@@ -28,14 +28,13 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)
 	packets := q.Process()
-	fmt.Println("internal object: ", q.NfQueue_int)
+	fmt.Println("Queue: ", q)
+
 LOOP:
 	for {
-		fmt.Println("Selecting.")
 		select {
 		case pkt := <-packets:
-			
-			fmt.Println("Length total", binary.Size(pkt), " Length of the payload: ", len(pkt.Payload))
+			fmt.Println(pkt)
 			pkt.Accept()
 		case <-sig:
 			break LOOP
