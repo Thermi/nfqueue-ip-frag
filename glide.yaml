@@ -1,0 +1,5 @@
+package: github.com/Thermi/nfqueue-ip-frag
+import:
+- package: github.com/google/gopacket
+- package: github.com/ogier/pflag
+- package: github.com/Thermi/go-nfqueue
