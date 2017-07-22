@@ -28,6 +28,7 @@ func main() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, os.Kill)
 	packets := q.Process()
+	fmt.Println("Received Channel: ", packets)
 	fmt.Println("Queue: ", q)
 
 LOOP:
