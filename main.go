@@ -20,6 +20,7 @@ type arguments struct {
 // Set a static MTU for now. Later, this has to be dynamic and depending on the destination
 var defaultMtu uint64 = 1300
 var args arguments
+
 /* This method receives packets via the "packetChannel" channel and handles them accordingly
  * (either allows them to pass or drops, gets the outgoing interface to the destination,
  * frags the packets and sends out the fragmentss via a raw socket to the destination)
@@ -36,6 +37,19 @@ var args arguments
 // 	}
 // }
 
+/* Architecture of this application:
+ * main -> wait for go func to exit
+ *      -> go func receivePackets
+ *			-> Check length, packets that are too long go into a channel
+ *			-> packets that are shorter than the MTU are accepted right away
+ *		-> go fund workers
+ *			-> receive packets via channel, modify payload, set more frags bit in header, return verdict
+ *			-> fragments are sent out via raw IP socket
+ *
+ * global channel for packets
+ *
+ *
+ */)
 func main() {
 	// parse args
 	flag.Uint64Var(&args.concurrency, "concurrency", 1, "The number of concurrent go routines to work on fragmenting packets")
