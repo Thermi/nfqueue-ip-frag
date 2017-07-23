@@ -2,9 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"os/signal"
+	"flag"
+	"syscall"
+	"github.com/Thermi/nfqueue-go/nfqueue"
 	gopacket "github.com/google/gopacket"
-	flag "github.com/ogier/pflag"
-	nfqueue "github.com/Thermi/go-nfqueue"
+	flag "github.com/ogier/pflag"	
 )
 
 type arguments struct {
