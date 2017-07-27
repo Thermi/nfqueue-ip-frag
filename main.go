@@ -1,14 +1,16 @@
 package main
 
 import (
-	"errors"
+//	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"sync"
+	"time"
 	nfqueue "github.com/Thermi/nfqueue-go/nfqueue"
-//	gopacket "github.com/google/gopacket"
+	gopacket "github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	flag "github.com/ogier/pflag"	
 )
 
@@ -26,63 +28,144 @@ var args arguments
 var defaultMtu uint64 = 1300
 
 
-//var channel chan *nfqueue.Payload
+var packetChannel chan *nfqueue.Payload
+var needMoreWorkers chan bool
+
 /* This method receives packets via the "packetChannel" channel and handles them accordingly
  * (either allows them to pass or drops, gets the outgoing interface to the destination,
  * frags the packets and sends out the fragmentss via a raw socket to the destination)
  * 
  */
-// func processPackets(packetChannel chan nfqueue.Packet) {
-// 	var pkt nfqueue.Packet
-// 	for {
-// 		pkt <- packetChannel
-// 		// Check the length
-// 		if len(pkt) > args.mtu {
-			
-// 		}
-// 	}
-// }
 
 /* Architecture of this application:
  * main -> wait for go funcs to exit
  *      -> go func receivePackets
  *			-> Check length, packets that are too long go into a channel
  *			-> packets that are shorter than the MTU are accepted right away
- *		-> go fund workers
+ 			-> if the write to the channel blocks more than 10 ms, tell main to create more workers
+ 			-> by default, start $NumCPU workers and bind them to the CPUs.
+ *		-> go func processPackets
  *			-> receive packets via channel, modify payload, set more frags bit in header, return verdict
  *			-> fragments are sent out via raw IP socket
  *
- * global channel for packets
  *
  *
  */
-var buf *nfqueue.Payload
 
 func receivePackets(payload *nfqueue.Payload) error {
- 	if buf == nil {
- 		fmt.Println("Received first packet")
- 		buf = payload
- 	} else {
- 		fmt.Println("Setting first verdict.")
- 		payload.SetVerdict(nfqueue.NF_ACCEPT)
- 		fmt.Println("Setting second verdict.")
- 		buf.SetVerdict(nfqueue.NF_ACCEPT)
- 		fmt.Println("WaitGroup before wg.Done in callback: ", wg)
- 		fmt.Println("Running wg.Done().")
- 		fmt.Println("WaitGroup after wg.Done in callback: ", wg)
- 		fmt.Println("Leaving the callback function finally.")
- 		return errors.New("verdicted the two packets.")
- 	}
- 	fmt.Println("Leaving callback function")
+
+	/* Check the length of the IP packet */
+	if len(payload.Data) > int(args.mtu) {
+		duration, _ := time.ParseDuration("10ms")
+		timer := time.NewTimer(duration)
+    	select {
+    	case packetChannel <- payload:
+    		break
+		case <- timer.C:
+			select {
+			case needMoreWorkers <- true:
+				break
+			default:
+    			break
+    		}
+    	}
+	} else {
+		payload.SetVerdict(nfqueue.NF_ACCEPT)
+	}
  	return nil
+}
+
+
+func processPackets() {
+	var packet *nfqueue.Payload
+	var newPacket []byte
+	for {
+		packet = <- packetChannel
+		if packet == nil {
+			return
+		}
+		var ipv4 layers.IPv4
+
+		// Decode the original packet and take its IP header
+
+		parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4, &ipv4)
+		decoded := []gopacket.LayerType{}
+		
+		err := parser.DecodeLayers(packet.Data, &decoded)
+		if err != nil {
+			fmt.Println("Could not decode packet.")
+			continue
+		}
+		data := ipv4.Payload
+		// Set more fragments
+		// Check if don't fragment is set:
+		if ipv4.Flags & layers.IPv4DontFragment > 0 {
+			// Accept the packet then and continue in the next loop
+			packet.SetVerdict(nfqueue.NF_ACCEPT)
+			continue
+		}
+
+		// Otherwise, we set the "more fragments" bit and then start fraggin'
+		ipv4.Flags &= layers.IPv4MoreFragments
+
+		// Calculate the header size and how much Data is allowed to be in this packet
+		headerLength := len(ipv4.Contents)
+		
+		// This is the length of payload section of the new original IP packet
+		var newLength uint64 = args.mtu - uint64(headerLength)
+		// Split payload at the MTU
+		// set length of the IP packet
+
+		ipv4.Length = uint16(newLength)
+
+		layerBuffer := gopacket.NewSerializeBuffer()
+		// We need to write the payload first
+		bytes, _ := layerBuffer.PrependBytes(int(newLength))
+		copy(bytes, ipv4.Payload[:newLength-1])
+		_  = ipv4.SerializeTo(layerBuffer, gopacket.SerializeOptions{})
+		
+
+		// Set verdict on the original packet, but with the new data.
+		// Pass pointer to new buffer here
+		err = packet.SetVerdictModified(nfqueue.NF_ACCEPT, layerBuffer.Bytes())
+
+		if err != nil {
+			fmt.Println("An error occured setting the verdict for packet ", ipv4.Id, " - ", err)
+		}
+
+
+		// The rest length of the IP packet we need to 
+		var restLength uint64 = uint64(len(data)) - newLength
+
+
+		// calculate the number of other fragments we need to send
+
+
+		// Set verdict on the original packet, but with the new data.
+		// Pass pointer to new buffer here
+		//nfqueue.SetVerdictModified(nfqueue.NF_ACCEPT, newPacket)
+
+		// Calculate how many fragments we actually have to make
+		// Create the corpus for a new IP packet
+		// Set fragment offset and length
+		// gopacket.NewPacket(...)
+		//
+		// gopacket.SerializePacket(...)
+		
+		//
+		// func (p *Payload) SetVerdictModified(verdict int, data []byte) error {
+		// Write fragments to raw socket
+	}
+
 }
 
 func main() {
 	// parse args
 	var err error
+	var i uint64
 	flag.Uint64Var(&args.concurrency, "concurrency", 1, "The number of concurrent go routines to work on fragmenting packets")
-	flag.Uint16Var(&args.queueNumber, "queueNumber", 0, "The nfqueue number that this application should use")
 	flag.Uint64Var(&args.mtu, "mtu", defaultMtu, "The maximum size of the IP packets. Bigger ones are fragmented.")
+	flag.Uint16Var(&args.queueNumber, "queueNumber", 0, "The nfqueue number that this application should use")
 	flag.BoolVar(&args.verbose, "verbose", false, "Enable or disable verbose mode")
 
 	flag.Parse()
@@ -135,6 +218,24 @@ func main() {
 		}
 		fmt.Println("Left sig loop")
 	}()
+
+	for i = 0; i < args.concurrency; i++ {
+		go processPackets()
+	}
+	go func() {
+		for {
+			select {
+				case <- needMoreWorkers:
+					fmt.Println("receivePackets indicated we need more workers, chan blocked for more than one 1 ms")
+					go processPackets()
+					break
+				case <- sig:
+					break
+					break
+			}
+		}
+	}()
+
 	if err = q.Loop(); err != nil {
 		fmt.Println("Error on exit of q.Loop():")
 		fmt.Print(err)
