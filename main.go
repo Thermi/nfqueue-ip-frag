@@ -63,7 +63,9 @@ var needMoreWorkers chan bool
 func receivePackets(payload *nfqueue.Payload) error {
 
 	/* Check the length of the IP packet */
+	fmt.Println("Received packet in receivePackets.")
 	if len(payload.Data) > int(args.mtu) {
+		fmt.Println("Packet is larger than the MTU.")
 		duration, _ := time.ParseDuration("10ms")
 		timer := time.NewTimer(duration)
     	select {
@@ -87,12 +89,13 @@ func receivePackets(payload *nfqueue.Payload) error {
 func processPackets() {
 	var packet *nfqueue.Payload
 	var ipv4 layers.IPv4
-
+	fmt.Println("Worker ready.")
 	listOfFragments := list.New()
 	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4, &ipv4)
 
 	for {
 		packet = <- packetChannel
+		fmt.Println("Received packet.")
 		if packet == nil {
 			return
 		}
@@ -103,15 +106,15 @@ func processPackets() {
 		decoded := []gopacket.LayerType{}
 		
 		err := parser.DecodeLayers(packet.Data, &decoded)
-		if err != nil {
-			fmt.Println("Could not decode packet.")
+		if len(ipv4.Payload) == 0 {
+			fmt.Println("Couldn't decode IPv4 packet.")
 			continue
 		}
-
 		// Set more fragments
 		// Check if don't fragment is set:
 		if ipv4.Flags & layers.IPv4DontFragment > 0 {
 			// Accept the packet then and continue in the next loop
+			fmt.Println("DF bit set, continuing in next iteration.")
 			packet.SetVerdict(nfqueue.NF_ACCEPT)
 			continue
 		}
@@ -172,7 +175,7 @@ func processPackets() {
 
 			}
 			bytes = make([]byte, newPayloadLength)
-			
+			// Out of bounds here. 
 			copy(bytes, ipv4.Payload[alreadySentBytes:newPayloadLength])
 
 			alreadySentBytes += firstFragmentPayloadLength
@@ -246,6 +249,7 @@ func main() {
 
 	socket.lock = new(sync.Mutex)
 
+	packetChannel = make(chan *nfqueue.Payload, 1)
 	var q = new(nfqueue.Queue)
 	// Implicitely starts one function, account for when starting q.Loop()
 	q.SetCallback(receivePackets)
