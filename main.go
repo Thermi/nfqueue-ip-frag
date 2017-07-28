@@ -124,6 +124,7 @@ func processPackets() {
 
 		// Calculate the header size and how much Data is allowed to be in this packet
 		headerLength := len(ipv4.Contents)
+		fmt.Println("Length of the original payload: ", len(ipv4.Payload))
 		
 		// This is the length of payload section of the new original IP packet
 		var firstFragmentPayloadLength uint64 = args.mtu - uint64(headerLength)
@@ -144,7 +145,7 @@ func processPackets() {
 		// Set verdict on the original packet, but with the new data.
 		// Pass pointer to new buffer here
 		err = packet.SetVerdictModified(nfqueue.NF_ACCEPT, layerBuffer.Bytes())
-
+		fmt.Println("New fragment length: ", ipv4.Length)
 		if err != nil {
 			fmt.Println("An error occured setting the verdict for packet ", ipv4.Id, " - ", err)
 		}
@@ -152,31 +153,44 @@ func processPackets() {
 		// The rest length of the IP packet we need to put into fragments
 		var alreadySentBytes uint64 = firstFragmentPayloadLength
 
+		fmt.Println("We need to put that many bytes into new fragments: ", alreadySentBytes)
+		fmt.Println("float64(len(ipv4.Payload)) / float64(args.mtu): ", float64(len(ipv4.Payload)) / float64(args.mtu))
+		fmt.Println("math.Ceil(): ", math.Ceil(float64(len(ipv4.Payload)) / float64(args.mtu)))
+		fmt.Println("int(): ", int(math.Ceil(float64(len(ipv4.Payload)) / float64(args.mtu))))
 		numberOfFragments := int(math.Ceil(float64(len(ipv4.Payload)) / float64(args.mtu)))
 
 		var newPayloadLength uint64
+		fmt.Println("Making ", numberOfFragments, " fragments.")
 		// calculate the number of other fragments we need to send
-		for i := 0; i< numberOfFragments; i++ {
+		for i := 1; i< numberOfFragments; i++ {
+			fmt.Println("Making segment ", i)
 			// clear the layerBuffer
 			layerBuffer.Clear()
 			// clear the slice
 			bytes = nil
 			
 			ipv4.FragOffset = uint16(alreadySentBytes)
+			fmt.Println("Frag offset: ", alreadySentBytes)
 			// If this is the last fragment, we need to set some special bits
 			if (i + 1 == numberOfFragments) {
 				newPayloadLength = uint64(len(ipv4.Payload)) - alreadySentBytes
+				fmt.Println("Last fragment. Sending packet with length ", newPayloadLength)
 				// set no more fragments
 				ipv4.Flags ^= layers.IPv4MoreFragments
 			} else {
 				// This is an intermediate fragment, in which we can put the maximum amount of bytes
 				// into the packet up until the mtu is reached.
+				fmt.Println("Intermediate fragment.")
 				newPayloadLength = firstFragmentPayloadLength
-
+				fmt.Println("New payload length: ", newPayloadLength)
 			}
+
+			fmt.Println("making slice of length ", newPayloadLength)
 			bytes = make([]byte, newPayloadLength)
-			// Out of bounds here. 
-			copy(bytes, ipv4.Payload[alreadySentBytes:newPayloadLength])
+			// Out of bounds here.
+			fmt.Println("Payload has length ", len(ipv4.Payload))
+			fmt.Println("Slicing from ", alreadySentBytes, " to ", alreadySentBytes+newPayloadLength)
+			copy(bytes, ipv4.Payload[alreadySentBytes:alreadySentBytes+newPayloadLength])
 
 			alreadySentBytes += firstFragmentPayloadLength
 
