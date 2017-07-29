@@ -21,6 +21,7 @@ type arguments struct {
 	concurrency uint64
 	queueNumber uint16
 	mtu uint64
+	mark uint32
 }
 
 type rawSocket struct {
@@ -124,7 +125,7 @@ func processPackets() {
 
 		// Calculate the header size and how much Data is allowed to be in this packet
 		headerLength := len(ipv4.Contents)
-		fmt.Println("Length of the original payload: ", len(ipv4.Payload))
+		originalLength := uint64(len(ipv4.Payload))
 		
 		// This is the length of payload section of the new original IP packet
 		var firstFragmentPayloadLength uint64 = args.mtu - uint64(headerLength)
@@ -144,7 +145,7 @@ func processPackets() {
 
 		// Set verdict on the original packet, but with the new data.
 		// Pass pointer to new buffer here
-		err = packet.SetVerdictModified(nfqueue.NF_ACCEPT, layerBuffer.Bytes())
+		err = packet.SetVerdict2(nfqueue.NF_REPEAT, layerBuffer.Bytes(), args.mark)
 		fmt.Println("New fragment length: ", ipv4.Length)
 		if err != nil {
 			fmt.Println("An error occured setting the verdict for packet ", ipv4.Id, " - ", err)
@@ -153,16 +154,14 @@ func processPackets() {
 		// The rest length of the IP packet we need to put into fragments
 		var alreadySentBytes uint64 = firstFragmentPayloadLength
 
-		fmt.Println("We need to put that many bytes into new fragments: ", alreadySentBytes)
-		fmt.Println("float64(len(ipv4.Payload)) / float64(args.mtu): ", float64(len(ipv4.Payload)) / float64(args.mtu))
-		fmt.Println("math.Ceil(): ", math.Ceil(float64(len(ipv4.Payload)) / float64(args.mtu)))
-		fmt.Println("int(): ", int(math.Ceil(float64(len(ipv4.Payload)) / float64(args.mtu))))
-		numberOfFragments := int(math.Ceil(float64(len(ipv4.Payload)) / float64(args.mtu)))
+		fmt.Println("We need to put that many bytes into new fragments: ", originalLength-alreadySentBytes)
+		fmt.Println("int(): ", int(math.Ceil(float64(originalLength-alreadySentBytes) / float64(args.mtu))))
+		numberOfFragments := int(math.Ceil(float64(originalLength-alreadySentBytes) / float64(args.mtu)))
 
 		var newPayloadLength uint64
 		fmt.Println("Making ", numberOfFragments, " fragments.")
 		// calculate the number of other fragments we need to send
-		for i := 1; i< numberOfFragments; i++ {
+		for i := 0; i< numberOfFragments; i++ {
 			fmt.Println("Making segment ", i)
 			// clear the layerBuffer
 			layerBuffer.Clear()
@@ -241,6 +240,7 @@ func main() {
 	flag.Uint64Var(&args.concurrency, "concurrency", 1, "The number of concurrent go routines to work on fragmenting packets")
 	flag.Uint64Var(&args.mtu, "mtu", defaultMtu, "The maximum size of the IP packets. Bigger ones are fragmented.")
 	flag.Uint16Var(&args.queueNumber, "queueNumber", 0, "The nfqueue number that this application should use")
+	flag.Uint32Var(&args.mark, "mark", 0, "The netfilter mark that should be set on the modified original packet")
 	flag.BoolVar(&args.verbose, "verbose", false, "Enable or disable verbose mode")
 
 	flag.Parse()
