@@ -121,7 +121,7 @@ func processPackets() {
 		}
 
 		// Otherwise, we set the "more fragments" bit and then start fraggin'
-		ipv4.Flags &= layers.IPv4MoreFragments
+		ipv4.Flags |= layers.IPv4MoreFragments
 
 		// Calculate the header size and how much Data is allowed to be in this packet
 		headerLength := len(ipv4.Contents)
@@ -175,7 +175,9 @@ func processPackets() {
 				newPayloadLength = uint64(len(ipv4.Payload)) - alreadySentBytes
 				fmt.Println("Last fragment. Sending packet with length ", newPayloadLength)
 				// set no more fragments
-				ipv4.Flags ^= layers.IPv4MoreFragments
+				fmt.Printf("Flags Before: %v\n", ipv4.Flags.String())
+				ipv4.Flags &^= layers.IPv4MoreFragments
+				fmt.Printf("Flags Now: %v\n", ipv4.Flags.String())
 			} else {
 				// This is an intermediate fragment, in which we can put the maximum amount of bytes
 				// into the packet up until the mtu is reached.
@@ -194,8 +196,9 @@ func processPackets() {
 			alreadySentBytes += firstFragmentPayloadLength
 
 			_  = ipv4.SerializeTo(layerBuffer, gopacket.SerializeOptions{ComputeChecksums : true})
-			
-			listOfFragments.PushBack(layerBuffer.Bytes())
+			buff := layerBuffer.Bytes()
+			fmt.Println("Length of buffer before insertion: ", len(buff)*8)
+			listOfFragments.PushBack(buff)
 		}
 
 		// Write fragments to raw socket
@@ -224,6 +227,7 @@ func sendPackets(packetList *list.List) error {
 		// destination is irrelevant here, because the socket takes over
 		// the whole IP header of our packet in the byte array
 		packet = e.Value.([]byte)
+		fmt.Println("Sending packet with length ", len(packet)*8, " byte")
 		err = syscall.Sendto(socket.fd, packet, 0, &addr)
 		if err != nil {
 			fmt.Println("An error occured when sending a packet: ", err)
@@ -260,6 +264,7 @@ func main() {
 		fmt.Println("An error occurred when the socket option IP_MTU_DISCOVER was set: ", err)
 		os.Exit(1)
 	}
+	syscall.SetsockoptInt(socket.fd, syscall.SOL_SOCKET, syscall.IP_HDRINCL, 1)
 
 	socket.lock = new(sync.Mutex)
 
